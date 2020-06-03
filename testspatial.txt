@@ -1,0 +1,236 @@
+ISpatialDtoRepository.cs
+-------------------------
+
+Changed return type SpatialDto -> SpatialMinDto 
+Added isMobile parameters
+
+IEnumerable<SpatialMinDto> GetAll(bool isMobile);
+IEnumerable<SpatialMinDto> GetSpatialsByDate(DateTime datetime, bool isMobile);
+
+
+SpatialDtoRepository.cs
+-----------------------
+
+New Function
+
+   private IEnumerable<SpatialMinDto> ProjectToList(IQueryable<SpatialData> query, bool isMobile = false)
+        {
+            if (isMobile)
+            {
+                return query.ProjectToList<SpatialMinDto>();
+            }
+            else
+            {
+                return query.ProjectToList<SpatialDto>();
+            }
+        }
+
+
+Fixing the methods inherit the interface above - And calling the new function ProjectToList
+
+	public IEnumerable<SpatialMinDto> GetAll(bool isMobile = false)
+        {
+            using (var context = new DbContext(_clientData.ObjectContextConnectionString))
+            {
+                return ProjectToList(context.Set<SpatialData>().Take(MaximumSelectionSizeHolder.Instance[_clientData]), isMobile);
+            }
+        }
+
+        // for opening spatial card
+        public FullSpatialDto GetFullSpatialById(int spatialId)
+        {
+            using (var context = new DbContext(_clientData.ObjectContextConnectionString))
+            {
+                SpatialData spatialObject = context.Set<SpatialData>().Find(spatialId);
+                return Mapper.Map<SpatialData, FullSpatialDto>(spatialObject);
+            }
+        }
+
+
+
+MeasurementsDtoRepository.cs
+----------------------------
+
+Will be allot of complition problems because the values return from SpatialDtoRepository are Min (SpatialMinDto) type and not the real type.. we need to cast it,
+
+For example.
+
+// Old line - will cause error in compilation
+var innerGroups = group.GroupBy(g => g.Spatial.Status == 1 , g => g);
+
+// New line with the casting
+var innerGroups = group.GroupBy(g => ((SpatialDto)g.Spatial).Status == 1 , g => g);
+
+
+
+AutoMapperConfiguration.cs
+--------------------------
+
+					cfg.CreateMap<SpatialData, SpatialMinDto>()
+                        .ForMember(obj => obj.Id, cond => cond.Condition(pre => pre.Id != null && pre.Id != 0))
+                        .ForMember(obj => obj.Title, cond => cond.Condition(pre => pre.Title != null))
+                        .ForMember(obj => obj.EntityType, cond => cond.Condition(pre => pre.EntityType != null))
+                        .ForMember(obj => obj.Location, cond => cond.Condition(pre => pre.Location != null))
+                        .ForMember(obj => obj.Street, cond => cond.Condition(pre => pre.Street != null))
+                        .ForMember(obj => obj.House, cond => cond.Condition(pre => pre.House != null))
+                        .ForMember(obj => obj.City, cond => cond.Condition(pre => pre.City != null))
+                        .ForMember(obj => obj.CreationDate, cond => cond.Condition(pre => pre.CreationDate != null))
+                        .ForMember(obj => obj.CreationUser, cond => cond.Condition(pre => pre.CreationUser != null))
+                        .ForMember(obj => obj.LastUpdateUser, cond => cond.Condition(pre => pre.LastUpdateUser != null))
+                        .ForMember(obj => obj.LastUpdateDate, cond => cond.Condition(pre => pre.LastUpdateDate != null));
+
+                    cfg.CreateMap<SpatialData, SpatialDto>()
+                        .IncludeBase<SpatialData, SpatialMinDto>()
+                        .ForMember(obj => obj.Status, cond => cond.Condition(pre => pre.Status != null))
+                        .ForMember(obj => obj.Competence, cond => cond.Condition(pre => pre.Competence != null))
+                        .ForMember(obj => obj.Contacts, cond => cond.Condition(pre => pre.Contacts != null))
+                        .ForMember(obj => obj.OccupationCapacity, cond => cond.Condition(pre => pre.OccupationCapacity != null))
+                        .ForMember(obj => obj.CurrentOccupation, cond => cond.Condition(pre => pre.CurrentOccupation != null))
+                        .ForMember(obj => obj.LinkToSite, cond => cond.Condition(pre => pre.LinkToSite != null))                       
+                        .ForMember(obj => obj.Comments, cond => cond.Condition(pre => pre.Comments != null))
+                        .ForMember(obj => obj.AccessModifierType, cond => cond.Condition(pre => pre.AccessModifierType != null));
+						
+
+SpatialController.cs
+--------------------
+
+Adding the parameters if IsMobileRequest()
+
+		[Route("")]
+        [HttpGet]
+        public IEnumerable<object> GetAll()
+        {
+
+            IEnumerable<object> objects = null;
+
+            try
+            {
+                ISpatialDtoRepository repository = CreateRepository<ISpatialDtoRepository>(Request);
+                objects = repository.GetAll(IsMobileRequest()).AsEnumerable<object>();
+            }
+            catch (Exception ex)
+            {
+                CommonHelpers.WriteErrorToLog("Error in GetAll", ex);
+                throw;
+            }
+
+            return objects;
+        }
+
+        [Route("SpatialsByDate")]
+        [HttpGet]
+        public IEnumerable<object> GetSpatialsByDate(DateTime datetime)
+        {
+            IEnumerable<object> objects = null;
+            try
+            {
+                ISpatialDtoRepository repository = CreateRepository<ISpatialDtoRepository>(Request);
+                objects = repository.GetSpatialsByDate(datetime, IsMobileRequest()).AsEnumerable<object>();
+
+            }
+            catch (Exception ex)
+            {
+                CommonHelpers.WriteErrorToLog("Error read spatials by date. Datetime =" + datetime.ToString(), ex);
+                throw;
+            }
+            return objects;
+
+        }
+
+MobileController.cs
+-------------------
+
+Line 80:
+		else if (table == "Spatials")
+                    {
+                        ISpatialDtoRepository spatialsDtoRepository = CreateRepository<ISpatialDtoRepository>(Request);
+                        IEnumerable<SpatialMinDto> results = spatialsDtoRepository.GetSpatialsByDate(fromDate, true);
+                        if (results != null)
+                        {
+                            dict.Add(table, results.ToList());
+                        }
+                    }
+					
+New Function
+
+		[Route("LayerHierarchyTreeId/{strTreesId}/{culture}")]
+        [HttpGet]
+        public object GetTree(string strTreesId, string culture)
+        {
+            IMapViewsLayersOrganizersConfigsDtoRepository _layersRepository = CreateRepository<IMapViewsLayersOrganizersConfigsDtoRepository>(Request);
+
+
+            string[] arrStrTreeIds = strTreesId.Split(',');
+            object data = _layersRepository.GetLayerTreeHierarcy(arrStrTreeIds.Select(x => Convert.ToInt32(x)).ToArray(), culture);
+
+            return data;
+        }
+		
+		
+IMapViewsLayersOrganizersConfigsDtoRepository.cs
+------------------------------------------------
+
+New Function declaration
+
+	object GetLayerTreeHierarcy(int[] treeIds, string culture);
+	
+	
+MapViewsLayersOrganizersConfigsDtoRepository.cs
+-----------------------------------------------
+
+New Functions
+
+	public object GetLayerTreeHierarcy(int[] treeIds, string culture)
+        {
+            HashSet<int> treeIdsSet = new HashSet<int>(treeIds);
+            using (GeneralContext generalContext = new GeneralContext())
+            {
+                using (var mapContext = new DbContext(_clientData.MapContextConnectionString))
+                {
+                    List<MapViewLayerOrganizerConfig> treeParents = mapContext.Set<MapViewLayerOrganizerConfig>().Where(cfgRecord => cfgRecord.IsActive && treeIdsSet.Contains(cfgRecord.Id)).ToList();
+                    
+                    List<MapViewLayerOrganizerConfig> allTreeItems = new List<MapViewLayerOrganizerConfig>(treeParents);
+                    HashSet<string> allLayersIds = new HashSet<string>();
+                    HashSet<string> allTitles = new HashSet<string>();
+
+                    foreach (var currParent in treeParents)
+                    {
+                        AddItems(mapContext, currParent, allTreeItems, allLayersIds, allTitles);
+
+                    }
+
+                    var resTitles = generalContext.Set<MultiLanguage>().Where(m => m.Culture.ToLower() == culture.ToLower() && allTitles.Contains(m.Key)).Select(x => new { x.Key, x.Value }).ToList();
+                    var resLayers = mapContext.Set<MapLayerDefinition>().Where(m => allLayersIds.Contains(m.LayerId)).Select(x => new { x.LayerId, x.LayerSource, x.ViewFilter, x.LayerType}).ToList();
+
+                    return new { treeItems = allTreeItems.Select(x => new { x.Id, x.ParentId, x.NodeTitle, x.NodeLayers, x.Order, x.NodeIcon }).ToList(), titles = resTitles, layers = resLayers };
+                }
+            }
+        }
+
+        private void AddItems(DbContext mapContext, MapViewLayerOrganizerConfig parent, List<MapViewLayerOrganizerConfig> items, HashSet<string> allLayersIds, HashSet<string> allTitles)
+        {
+            if (parent.NodeLayers != null)
+            {
+                string[] LayerIds = parent.NodeLayers.Split(',');
+                foreach (string currLayerId in LayerIds)
+                {
+                    allLayersIds.Add(currLayerId);
+                }
+            }
+
+            if (parent.NodeTitle != null)
+            {
+                allTitles.Add(parent.NodeTitle);
+            }
+
+            // Adding the item children
+            List<MapViewLayerOrganizerConfig> currChildren = mapContext.Set<MapViewLayerOrganizerConfig>().Where(cfgRecord => cfgRecord.IsActive && cfgRecord.ParentId == parent.Id).ToList();
+            foreach (MapViewLayerOrganizerConfig currItem in currChildren)
+            {
+                items.Add(currItem);
+                AddItems(mapContext, currItem, items, allLayersIds, allTitles);
+            }
+        }
+	
+	
+	
